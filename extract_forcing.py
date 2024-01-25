@@ -4,7 +4,243 @@ import metpy
 from metpy.units import units
 from metpy.constants import water_heat_vaporization, dry_air_gas_constant, earth_gravity
 from metpy.interpolate import interpolate_1d
+import glob
 
+
+def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
+    h = 30.0  # surface elevation of ENA site in m
+    lat = 39.0916  # deg N
+    lon = -28.0257  # deg E
+    forc_dir = "/ccsopen/home/h1x/scratch/ena_forcing_check/forcing"
+    sonde_dir = "/ccsopen/home/h1x/scratch/ena_forcing_check/obs/enasondewnpnC1"
+
+    dz = 25.0  # m
+    # ztop = 6500.0
+    ztop = 10750.0
+    ztopo = ztop + 300.0
+    zout = np.arange(dz * 0.5, ztop + dz * 0.6, dz)
+
+    # all the dates !
+    casedate = np.datetime64(datestring)
+    datem1 = (casedate - np.timedelta64(1, "D")).astype(object).strftime("%Y%m%d")
+    date0 = casedate.astype(object).strftime("%Y%m%d")
+    datep1 = (casedate + np.timedelta64(1, "D")).astype(object).strftime("%Y%m%d")
+    hrs_to_shift = 0
+    ts = casedate + np.timedelta64(hrs_to_shift, "h") # time to extract sounding
+    ds = ts.astype(object).timetuple().tm_yday + hrs_to_shift/24.0
+    h1, h2 = -6, hrs_to_simulate+6 # start/end time to extract forcing in hours before/after ts
+    t1 = ts + np.timedelta64(h1, "h") # start time to extract forcing
+    t2 = ts + np.timedelta64(h2, "h") # end time to extract forcing
+    d1 = casedate.astype(object).timetuple().tm_yday + (hrs_to_shift+h1)/24.0
+    d2 = casedate.astype(object).timetuple().tm_yday + (hrs_to_shift+h2)/24.0
+
+    # extract ARM sounding
+    snd_time = ts - np.timedelta64(1, "h")
+    snd_datestring = snd_time.astype(object).strftime("%Y%m%d")
+    snd_hour = snd_time.astype(object).hour
+    snd_files = glob.glob(
+        f"{sonde_dir}/enasondewnpnC1.b1.{snd_datestring}.{snd_hour:02d}*.cdf"
+    )
+    if len(snd_files) != 1:
+        print("ERROR! Cannot find the sounding file needed!")
+    else:
+        print(f'ARM sounding file found: {snd_files[0]}')
+        z_snd, tp_snd, rv_snd, u_snd, v_snd = extract_sounding_sonde(snd_files[0])
+
+    # extract ERA5 surface fluxes and large-scale forcings
+    era5_sfc = xr.open_dataset(
+        f"{forc_dir}/era5/data/ERA5-{datem1}-{datep1}-sfc.nc"
+    )
+    era5_l = xr.open_dataset(f"{forc_dir}/era5/data/ERA5-{datem1}-{datep1}-ml.nc")
+    print("Extracting ERA5 sfc data ...")
+    era5_sfc = era5_sfc.sortby(era5_sfc.time)
+    toy_era5_sfc, sst_era5, shf_era5, lhf_era5, _ = extract_sfc_fluxes_era5(
+        era5_sfc, t1, t2, lat, lon, dx
+    )
+    print("Extracting ERA5 vertical levels data ...")
+    toy_era5, zs, ps, z, p, w, omega, u, v, ta, ma, ug, vg = extract_forcing_era5(
+        era5_l, t1, t2, lat, lon, dx
+    )
+    (
+        w_era5,
+        u_era5,
+        v_era5,
+        ta_era5,
+        ma_era5,
+        ug_era5,
+        vg_era5,
+    ) = interpolate_forcing_era5(zout, z, w, u, v, ta, ma, ug, vg, zs)
+    ps_era5 = ps.mean(axis=(1, 2))
+    del zs, ps, z, p, w, omega, u, v, ta, ma, ug, vg
+    del era5_l, era5_sfc
+
+    # output sounding with surface pressure from forcing dataset
+    nt_snd = np.nonzero(toy_era5 == ds)[0][0]
+    print(f"Writing out sounding data with ERA5 P_surf at {toy_era5[nt_snd]}...")
+    lim = z_snd < ztopo
+    z_snd_out = np.compress(lim, z_snd)
+    tp_snd_out = np.compress(lim, tp_snd)
+    rv_snd_out = np.compress(lim, rv_snd)
+    rv_snd_out = rv_snd_out * 1.0e3  # convert to g/kg
+    u_snd_out = np.compress(lim, u_snd)
+    v_snd_out = np.compress(lim, v_snd)
+    nz = z_snd_out.shape[0]
+    with open(f"snd_era5ps.{date0}", "w") as snd:
+        snd.write("z[m] p[mb] tp[K] q[g/kg] u[m/s] v[m/s]\n")
+        snd.write(
+            f"{ds},  {nz},  {ps_era5.values[nt_snd]/100.0:8.3f}  day,levels,pres0\n"
+        )
+        for z, t, r, u, v in zip(
+            z_snd_out, tp_snd_out.magnitude, rv_snd_out.magnitude, u_snd_out, v_snd_out
+        ):
+            snd.write(
+                f"{z - h:8.2f}  -999.9  {t:8.4f}  {r:8.4f}  {u:9.4f}  {v:9.4f} \n"
+            )
+        snd.write(
+            f"{d2},  {nz},  {ps_era5.values[nt_snd]/100.0:8.3f}  day,levels,pres0\n"
+        )
+        for z, t, r, u, v in zip(
+            z_snd_out, tp_snd_out.magnitude, rv_snd_out.magnitude, u_snd_out, v_snd_out
+        ):
+            snd.write(
+                f"{z - h:8.2f}  -999.9  {t:8.4f}  {r:8.4f}  {u:9.4f}  {v:9.4f} \n"
+            )
+
+    # output surface fluxes
+    print(f"Writing out ERA5 sfc data from {toy_era5_sfc[0]} to {toy_era5_sfc[-1]}...")
+    with open(f"sfc_era5.{date0}", "w") as sfc:
+        sfc.write("day sst(K) H(W/m2) LE(W/m2) TAU(m2/s2) \n")
+        for nt in range(len(toy_era5_sfc)):
+            sfc.write(
+                f"{toy_era5_sfc[nt]:13.9f}"
+                f"  {sst_era5[nt]:8.4f}"
+                f"  {-shf_era5[nt]:9.4f}"
+                f"  {-lhf_era5.values[nt]:9.4f}"
+                "  -999.9 \n"
+            )
+
+    # output large-scale forcing
+    print(f"Writing out ERA5 lsf data from {toy_era5[0]} to {toy_era5[-1]}...")
+    nz = zout.shape[0]
+    with open(f"lsf_era5.{date0}", "w") as lsf:
+        lsf.write(" z[m] p[mb]  tls[K/s] qls[kg/kg/s] uls  vls  wls[m/s] \n")
+        for nt in range(len(toy_era5)):
+            lsf.write(
+                f"{toy_era5[nt]:13.9f},  {nz},  {ps_era5.values[nt]/100.0:8.3f}  day,levels,pres0 \n"
+            )
+            for zl in range(nz):
+                lsf.write(
+                    f"{zout[zl]:9.2f}  -999.9"
+                    f"  {ta_era5[nt, zl]:12.4e}"
+                    f"  {ma_era5[nt, zl]:12.4e}"
+                    f"  {ug_era5[nt, zl]:9.4f}"
+                    f"  {vg_era5[nt, zl]:9.4f}"
+                    f"  {w_era5[nt, zl]:12.4e} \n"
+                )
+
+    # extract MERRA2 surface fluxes and large-scale forcings
+    merra2_l = xr.open_mfdataset(
+        [f"{forc_dir}/merra2/data/MERRA2_400.inst3_3d_asm_Nv.{datem1}.nc4",
+        f"{forc_dir}/merra2/data/MERRA2_400.inst3_3d_asm_Nv.{date0}.nc4",
+        f"{forc_dir}/merra2/data/MERRA2_400.inst3_3d_asm_Nv.{datep1}.nc4",]
+    )
+    merra2_sfc = xr.open_mfdataset(
+        [f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_flx_Nx.{datem1}.nc4",
+        f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_flx_Nx.{date0}.nc4",
+        f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_flx_Nx.{datep1}.nc4",]
+    )
+    merra2_sfc2 = xr.open_mfdataset(
+        [f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_slv_Nx.{datem1}.nc4",
+        f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_slv_Nx.{date0}.nc4",
+        f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_slv_Nx.{datep1}.nc4",]
+    )
+    print("Extracting MERRA2 sfc data ...")
+    toy_merra2_sfc, sst_merra2, shf_merra2, lhf_merra2 = extract_sfc_fluxes_merra2(
+        merra2_sfc, merra2_sfc2, t1, t2, lat, lon, dx
+    )
+    print("Extracting MERRA2 vertical levels data ...")
+    toy_merra2, zs, ps, z, p, w, omega, u, v, ta, ma, ug, vg = extract_forcing_merra2(
+        merra2_l, t1, t2, lat, lon, dx
+    )
+    (
+        w_merra2,
+        u_merra2,
+        v_merra2,
+        ta_merra2,
+        ma_merra2,
+        ug_merra2,
+        vg_merra2,
+    ) = interpolate_forcing_merra2(zout, z, w, u, v, ta, ma, ug, vg, zs)
+    ps_merra2 = ps.mean(axis=(1, 2))
+    del zs, ps, z, p, w, omega, u, v, ta, ma, ug, vg
+    del merra2_l, merra2_sfc, merra2_sfc2
+
+    # output sounding with surface fluxes from forcing datasets
+    nt_snd = np.nonzero(toy_merra2 == ds)[0][0]
+    print(f"Writing out sounding data with MERRA2 P_surf at {toy_merra2[nt_snd]}...")
+    lim = z_snd < ztopo
+    z_snd_out = np.compress(lim, z_snd)
+    tp_snd_out = np.compress(lim, tp_snd)
+    rv_snd_out = np.compress(lim, rv_snd)
+    rv_snd_out = rv_snd_out * 1.0e3  # convert to g/kg
+    u_snd_out = np.compress(lim, u_snd)
+    v_snd_out = np.compress(lim, v_snd)
+    nz = z_snd_out.shape[0]
+    with open(f"snd_merra2ps.{date0}", "w") as snd:
+        snd.write("z[m] p[mb] tp[K] q[g/kg] u[m/s] v[m/s]\n")
+        snd.write(
+            f"{ds},  {nz},  {ps_merra2.values[nt_snd]/100.0:8.3f}  day,levels,pres0\n"
+        )
+        for z, t, r, u, v in zip(
+            z_snd_out, tp_snd_out.magnitude, rv_snd_out.magnitude, u_snd_out, v_snd_out
+        ):
+            snd.write(
+                f"{z - h:8.2f}  -999.9  {t:8.4f}  {r:8.4f}  {u:9.4f}  {v:9.4f} \n"
+            )
+        snd.write(
+            f"{d2},  {nz},  {ps_merra2.values[nt_snd]/100.0:8.3f}  day,levels,pres0\n"
+        )
+        for z, t, r, u, v in zip(
+            z_snd_out, tp_snd_out.magnitude, rv_snd_out.magnitude, u_snd_out, v_snd_out
+        ):
+            snd.write(
+                f"{z - h:8.2f}  -999.9  {t:8.4f}  {r:8.4f}  {u:9.4f}  {v:9.4f} \n"
+            )
+
+    # output surface fluxes
+
+    print(f"Writing out MERRA2 sfc data from {toy_merra2_sfc[0]} to {toy_merra2_sfc[-1]}...")
+    with open(f"sfc_merra2.{date0}", "w") as sfc:
+        sfc.write("day sst(K) H(W/m2) LE(W/m2) TAU(m2/s2) \n")
+        for nt in range(len(toy_merra2_sfc)):
+            sfc.write(
+                f"{toy_merra2_sfc[nt]:13.9f}"
+                f"  {sst_merra2.values[nt]:8.4f}"
+                f"  {shf_merra2.values[nt]:9.4f}"
+                f"  {lhf_merra2.values[nt]:9.4f}"
+                "  -999.9 \n"
+            )
+
+    # output large-scale forcings
+    print(f"Writing out MERRA2 lsf data from {toy_merra2[0]} to {toy_merra2[-1]}...")
+    nz = zout.shape[0]
+    with open(f"lsf_merra2.{date0}", "w") as lsf:
+        lsf.write(" z[m] p[mb]  tls[K/s] qls[kg/kg/s] uls  vls  wls[m/s] \n")
+        for nt in range(len(toy_merra2)):
+            lsf.write(
+                f"{toy_merra2[nt]:13.9f},  {nz},  {ps_merra2.values[nt]/100.0:8.3f}  day,levels,pres0 \n"
+            )
+            for zl in range(nz):
+                lsf.write(
+                    f"{zout[zl]:9.2f}  -999.9"
+                    f"  {ta_merra2[nt, zl]:12.4e}"
+                    f"  {ma_merra2[nt, zl]:12.4e}"
+                    f"  {ug_merra2[nt, zl]:9.4f}"
+                    f"  {vg_merra2[nt, zl]:9.4f}"
+                    f"  {w_merra2[nt, zl]:12.4e} \n"
+                )
+
+    return
 
 def extract_sounding_sonde(sonde_file):
     sonde = xr.open_dataset(sonde_file)
@@ -45,6 +281,7 @@ def extract_sfc_fluxes_merra2(d1, d2, t1, t2, lat, lon, dx):
             t - np.datetime64(d1.time.sel(time=t1, method="nearest").values, "Y"), "m"
         )
         / np.timedelta64(1, "D")
+        + 1.0
         for t in d1.time.loc[t1:t2].values
     ]
     return np.asarray(toy), sst, shf, lhf
@@ -74,6 +311,7 @@ def extract_sfc_fluxes_era5(d, t1, t2, lat, lon, dx):
             t - np.datetime64(d.time.sel(time=t1, method="nearest").values, "Y"), "m"
         )
         / np.timedelta64(1, "D")
+        + 1.0
         for t in d.time.loc[t1:t2].values
     ]
     zs = (
@@ -164,11 +402,11 @@ def extract_forcing_era5(d, t1, t2, lat, lon, dx_in):
     del z.attrs["standard_name"]
 
     w = -omega.metpy.quantify() * rd * tm.metpy.quantify() / p.metpy.quantify() / g
-    print(omega.metpy.units)
-    print(tm.metpy.units)
-    print(rd.units)
-    print(p.metpy.units)
-    print(w.metpy.units)
+    # print(omega.metpy.units)
+    # print(tm.metpy.units)
+    # print(rd.units)
+    # print(p.metpy.units)
+    # print(w.metpy.units)
 
     ph = ph.metpy.assign_crs(
         grid_mapping_name="latitude_longitude", earth_radius=6371229.0
@@ -204,6 +442,7 @@ def extract_forcing_era5(d, t1, t2, lat, lon, dx_in):
             t - np.datetime64(d.time.sel(time=t1, method="nearest").values, "Y"), "m"
         )
         / np.timedelta64(1, "D")
+        + 1.0
         for t in d.time.loc[t1:t2].values
     ]
 
@@ -273,11 +512,11 @@ def extract_forcing_merra2(d, t1, t2, lat, lon, dx_in):
     ug = -dpy / f
 
     w = -omega.metpy.quantify() * rd * tm.metpy.quantify() / p.metpy.quantify() / g
-    print(omega.metpy.units)
-    print(tm.metpy.units)
-    print(rd.units)
-    print(p.metpy.units)
-    print(w.metpy.units)
+    # print(omega.metpy.units)
+    # print(tm.metpy.units)
+    # print(rd.units)
+    # print(p.metpy.units)
+    # print(w.metpy.units)
 
     # calculate horizontal advection tendencies
     tp = metpy.calc.potential_temperature(p, t)
@@ -290,6 +529,7 @@ def extract_forcing_merra2(d, t1, t2, lat, lon, dx_in):
             t - np.datetime64(d.time.sel(time=t1, method="nearest").values, "Y"), "m"
         )
         / np.timedelta64(1, "D")
+        + 1.0
         for t in d.time.loc[t1:t2].values
     ]
 

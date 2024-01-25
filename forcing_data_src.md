@@ -22,4 +22,8 @@ These are notes from working with the various of forcing datasets we prepared fo
 
 - NASA's reanalysis product, successor of MERRA
 - very modern data access system and very well documented
-- "assimilated" is better than "analyzied" fields
+- "assimilated" is better than "analyzed" fields
+
+## VARANAL
+
+- it is only available for 2017-06-01 to 2018-02-28 on arm.gov.
