@@ -19,38 +19,90 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
     ztop = 10750.0
     ztopo = ztop + 300.0
     zout = np.arange(dz * 0.5, ztop + dz * 0.6, dz)
+    dz_sndout = 10 # m
+    z_snd_out2 = np.insert(np.arange(dz_sndout * 0.5, ztop + dz_sndout * 0.6, dz_sndout), 0, 1.)
 
-    # all the dates !
+    # all the dates!
     casedate = np.datetime64(datestring)
     datem1 = (casedate - np.timedelta64(1, "D")).astype(object).strftime("%Y%m%d")
     date0 = casedate.astype(object).strftime("%Y%m%d")
     datep1 = (casedate + np.timedelta64(1, "D")).astype(object).strftime("%Y%m%d")
-    hrs_to_shift = 0
-    ts = casedate + np.timedelta64(hrs_to_shift, "h") # time to extract sounding
-    ds = ts.astype(object).timetuple().tm_yday + hrs_to_shift/24.0
-    h1, h2 = -6, hrs_to_simulate+6 # start/end time to extract forcing in hours before/after ts
-    t1 = ts + np.timedelta64(h1, "h") # start time to extract forcing
-    t2 = ts + np.timedelta64(h2, "h") # end time to extract forcing
-    d1 = casedate.astype(object).timetuple().tm_yday + (hrs_to_shift+h1)/24.0
-    d2 = casedate.astype(object).timetuple().tm_yday + (hrs_to_shift+h2)/24.0
-
-    # extract ARM sounding
-    snd_time = ts - np.timedelta64(1, "h")
-    snd_datestring = snd_time.astype(object).strftime("%Y%m%d")
-    snd_hour = snd_time.astype(object).hour
-    snd_files = glob.glob(
-        f"{sonde_dir}/enasondewnpnC1.b1.{snd_datestring}.{snd_hour:02d}*.cdf"
+    ts = casedate + np.timedelta64(hrs_to_shift, "h")  # time to extract sounding
+    ds = casedate.astype(object).timetuple().tm_yday + hrs_to_shift / 24.0
+    # start/end time to extract forcing in hours before/after ts
+    h1, h2 = -6, hrs_to_simulate + 6
+    # start/end time to extract forcing in hours before/after ts
+    h1_snd, h2_snd = 0, hrs_to_simulate + 12
+    # start/end time to extract forcing
+    t1 = ts + np.timedelta64(h1, "h")
+    t2 = ts + np.timedelta64(h2, "h")
+    # start/end time to extract sounding
+    t1_snd = ts + np.timedelta64(h1_snd, "h")
+    t2_snd = ts + np.timedelta64(h2_snd, "h")
+    d1 = casedate.astype(object).timetuple().tm_yday + (hrs_to_shift + h1) / 24.0
+    d2 = casedate.astype(object).timetuple().tm_yday + (hrs_to_shift + h2) / 24.0
+    d1_snd = (
+        casedate.astype(object).timetuple().tm_yday + (hrs_to_shift + h1_snd) / 24.0
     )
-    if len(snd_files) != 1:
-        print("ERROR! Cannot find the sounding file needed!")
-    else:
-        print(f'ARM sounding file found: {snd_files[0]}')
-        z_snd, tp_snd, rv_snd, u_snd, v_snd = extract_sounding_sonde(snd_files[0])
+    d2_snd = (
+        casedate.astype(object).timetuple().tm_yday + (hrs_to_shift + h2_snd) / 24.0
+    )
+
+    print(f"Simulation starts (init. sounding) at {ts}, doy={ds}")
+    print(f"Forcing extraction starts at {t1}, doy={d1}")
+    print(f"Forcing extraction ends at {t2} doy={d2}")
+    print(f"Sounding extraction starts at {t1_snd}, doy={d1_snd}")
+    print(f"Sounding extraction ends at {t2_snd} doy={d2_snd}")
+
+    # extract all the available ARM soundings for nudging
+    # searching for soundings from t1_snd to t2_snd
+    # with a given time interval (12 h for now)
+    snd_times = []
+    snd_doys = []
+    snd_vars = []
+    for isnd, snd_time in enumerate(np.arange(t1_snd, t2_snd, np.timedelta64(12, "h"))):
+        snd_doy = d1_snd + 12 / 24.0 * isnd
+        snd_time_adj = snd_time - np.timedelta64(1, "h")
+        snd_datestring = snd_time_adj.astype(object).strftime("%Y%m%d")
+        snd_hour = snd_time_adj.astype(object).hour
+        snd_files = glob.glob(
+            f"{sonde_dir}/enasondewnpnC1.b1.{snd_datestring}.{snd_hour:02d}*.cdf"
+        )
+        if len(snd_files) != 1:
+            print(f"Cannot find the sounding file for {snd_time}.")
+        else:
+            print(f"ARM sounding file found: {snd_files[0]} for {snd_time}")
+            snd_times.append(snd_time)
+            snd_doys.append(snd_doy)
+            snd_vars.append(extract_sounding_sonde(snd_files[0]))
+
+    # output sounding
+    with open(f"snd.{date0}", "w") as snd:
+
+        snd.write("z[m] p[mb] tp[K] q[g/kg] u[m/s] v[m/s]\n")
+
+        for snd_var, snd_doy in zip(snd_vars, snd_doys):
+            ps_snd, z_snd, tp_snd, rv_snd, u_snd, v_snd = snd_var
+            tp_snd_out = np.interp(z_snd_out2, z_snd-h, tp_snd.magnitude)
+            rv_snd_out = np.interp(z_snd_out2, z_snd-h, rv_snd.magnitude)
+            rv_snd_out = rv_snd_out * 1.0e3  # convert to g/kg
+            u_snd_out = np.interp(z_snd_out2, z_snd-h, u_snd)
+            v_snd_out = np.interp(z_snd_out2, z_snd-h, v_snd)
+            nz = z_snd_out2.shape[0]
+            snd.write(f"{snd_doy},  {nz},  {ps_snd:8.3f}  day,levels,pres0\n")
+            for z, t, r, u, v in zip(
+                z_snd_out2,
+                tp_snd_out,
+                rv_snd_out,
+                u_snd_out,
+                v_snd_out,
+            ):
+                snd.write(
+                    f"{z:8.2f}  -999.9  {t:8.4f}  {r:8.4f}  {u:9.4f}  {v:9.4f} \n"
+                )
 
     # extract ERA5 surface fluxes and large-scale forcings
-    era5_sfc = xr.open_dataset(
-        f"{forc_dir}/era5/data/ERA5-{datem1}-{datep1}-sfc.nc"
-    )
+    era5_sfc = xr.open_dataset(f"{forc_dir}/era5/data/ERA5-{datem1}-{datep1}-sfc.nc")
     era5_l = xr.open_dataset(f"{forc_dir}/era5/data/ERA5-{datem1}-{datep1}-ml.nc")
     print("Extracting ERA5 sfc data ...")
     era5_sfc = era5_sfc.sortby(era5_sfc.time)
@@ -75,6 +127,7 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
     del era5_l, era5_sfc
 
     # output sounding with surface pressure from forcing dataset
+    _, z_snd, tp_snd, rv_snd, u_snd, v_snd = snd_vars[0]
     nt_snd = np.nonzero(toy_era5 == ds)[0][0]
     print(f"Writing out sounding data with ERA5 P_surf at {toy_era5[nt_snd]}...")
     lim = z_snd < ztopo
@@ -140,19 +193,25 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
 
     # extract MERRA2 surface fluxes and large-scale forcings
     merra2_l = xr.open_mfdataset(
-        [f"{forc_dir}/merra2/data/MERRA2_400.inst3_3d_asm_Nv.{datem1}.nc4",
-        f"{forc_dir}/merra2/data/MERRA2_400.inst3_3d_asm_Nv.{date0}.nc4",
-        f"{forc_dir}/merra2/data/MERRA2_400.inst3_3d_asm_Nv.{datep1}.nc4",]
+        [
+            f"{forc_dir}/merra2/data/MERRA2_400.inst3_3d_asm_Nv.{datem1}.nc4",
+            f"{forc_dir}/merra2/data/MERRA2_400.inst3_3d_asm_Nv.{date0}.nc4",
+            f"{forc_dir}/merra2/data/MERRA2_400.inst3_3d_asm_Nv.{datep1}.nc4",
+        ]
     )
     merra2_sfc = xr.open_mfdataset(
-        [f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_flx_Nx.{datem1}.nc4",
-        f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_flx_Nx.{date0}.nc4",
-        f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_flx_Nx.{datep1}.nc4",]
+        [
+            f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_flx_Nx.{datem1}.nc4",
+            f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_flx_Nx.{date0}.nc4",
+            f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_flx_Nx.{datep1}.nc4",
+        ]
     )
     merra2_sfc2 = xr.open_mfdataset(
-        [f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_slv_Nx.{datem1}.nc4",
-        f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_slv_Nx.{date0}.nc4",
-        f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_slv_Nx.{datep1}.nc4",]
+        [
+            f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_slv_Nx.{datem1}.nc4",
+            f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_slv_Nx.{date0}.nc4",
+            f"{forc_dir}/merra2/data/MERRA2_400.tavg1_2d_slv_Nx.{datep1}.nc4",
+        ]
     )
     print("Extracting MERRA2 sfc data ...")
     toy_merra2_sfc, sst_merra2, shf_merra2, lhf_merra2 = extract_sfc_fluxes_merra2(
@@ -176,6 +235,7 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
     del merra2_l, merra2_sfc, merra2_sfc2
 
     # output sounding with surface fluxes from forcing datasets
+    _, z_snd, tp_snd, rv_snd, u_snd, v_snd = snd_vars[0]
     nt_snd = np.nonzero(toy_merra2 == ds)[0][0]
     print(f"Writing out sounding data with MERRA2 P_surf at {toy_merra2[nt_snd]}...")
     lim = z_snd < ztopo
@@ -209,7 +269,9 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
 
     # output surface fluxes
 
-    print(f"Writing out MERRA2 sfc data from {toy_merra2_sfc[0]} to {toy_merra2_sfc[-1]}...")
+    print(
+        f"Writing out MERRA2 sfc data from {toy_merra2_sfc[0]} to {toy_merra2_sfc[-1]}..."
+    )
     with open(f"sfc_merra2.{date0}", "w") as sfc:
         sfc.write("day sst(K) H(W/m2) LE(W/m2) TAU(m2/s2) \n")
         for nt in range(len(toy_merra2_sfc)):
@@ -242,8 +304,10 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
 
     return
 
+
 def extract_sounding_sonde(sonde_file):
     sonde = xr.open_dataset(sonde_file)
+    ps = sonde.pres.values[0]
     tp = metpy.calc.potential_temperature(
         sonde.pres.metpy.quantify(),
         sonde.tdry.metpy.magnitude * units("degC"),
@@ -256,7 +320,7 @@ def extract_sounding_sonde(sonde_file):
     z = sonde.alt
     u = sonde.u_wind
     v = sonde.v_wind
-    return z, tp, rv, u, v
+    return [ps, z, tp, rv, u, v]
 
 
 def extract_sfc_fluxes_merra2(d1, d2, t1, t2, lat, lon, dx):
