@@ -4,11 +4,10 @@
 *.ppt
 *.pptx
 katex_custom.css
-/*.zarr/*
 __pycache__/
 /obs/
 /pinacles_examples/
-/**/old/*
+old/
 *.log
 log.*
 /pinacles_zarr/
