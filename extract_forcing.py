@@ -430,6 +430,8 @@ def extract_forcing_era5(d, t1, t2, lat, lon, dx_in):
     u = d.u.loc[t1:t2, :, lat + dx : lat - dx, lon + 360 - dx : lon + 360 + dx]
     v = d.v.loc[t1:t2, :, lat + dx : lat - dx, lon + 360 - dx : lon + 360 + dx]
     omega = d.w.loc[t1:t2, :, lat + dx : lat - dx, lon + 360 - dx : lon + 360 + dx]
+    # note here that the second index (1) here means getting the first level data, 
+    # not the actual array index.Also, only first level data is valid
     lnsp = d.lnsp.loc[t1:t2, 1, lat + dx : lat - dx, lon + 360 - dx : lon + 360 + dx]
     # the surface geopotential looks so noisy because of the spectral decomposition/representation used in IFS
     sgp = d.z.loc[t1:t2, 1, lat + dx : lat - dx, lon + 360 - dx : lon + 360 + dx]

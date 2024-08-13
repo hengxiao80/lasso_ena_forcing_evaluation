@@ -1,0 +1,8 @@
+*.nc
+*.html
+*.ppt
+*.pptx
+katex_custom.css
+/*.zarr/*
+__pycache__/
+/obs/
