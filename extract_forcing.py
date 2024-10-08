@@ -11,8 +11,8 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
     h = 30.0  # surface elevation of ENA site in m
     lat = 39.0916  # deg N
     lon = -28.0257  # deg E
-    forc_dir = "/ccsopen/home/h1x/scratch/ena_forcing_check/forcing"
-    sonde_dir = "/ccsopen/home/h1x/scratch/ena_forcing_check/obs/enasondewnpnC1"
+    forc_dir = "/ccsopen/home/hengxiao80/ena_forcing/forcing"
+    sonde_dir = "/ccsopen/home/hengxiao80/ena_forcing/obs/enasondewnpnC1"
 
     dz = 25.0  # m
     # ztop = 6500.0
@@ -186,9 +186,11 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
                     f"{zout[zl]:9.2f}  -999.9"
                     f"  {ta_era5[nt, zl]:12.4e}"
                     f"  {ma_era5[nt, zl]:12.4e}"
+                    f"  {u_era5[nt, zl]:9.4f}"
+                    f"  {v_era5[nt, zl]:9.4f}"
+                    f"  {w_era5[nt, zl]:12.4e}"
                     f"  {ug_era5[nt, zl]:9.4f}"
-                    f"  {vg_era5[nt, zl]:9.4f}"
-                    f"  {w_era5[nt, zl]:12.4e} \n"
+                    f"  {vg_era5[nt, zl]:9.4f} \n"
                 )
 
     # extract MERRA2 surface fluxes and large-scale forcings
@@ -297,9 +299,11 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
                     f"{zout[zl]:9.2f}  -999.9"
                     f"  {ta_merra2[nt, zl]:12.4e}"
                     f"  {ma_merra2[nt, zl]:12.4e}"
+                    f"  {u_merra2[nt, zl]:9.4f}"
+                    f"  {v_merra2[nt, zl]:9.4f}"
+                    f"  {w_merra2[nt, zl]:12.4e}"
                     f"  {ug_merra2[nt, zl]:9.4f}"
-                    f"  {vg_merra2[nt, zl]:9.4f}"
-                    f"  {w_merra2[nt, zl]:12.4e} \n"
+                    f"  {vg_merra2[nt, zl]:9.4f} \n"
                 )
 
     return
@@ -364,6 +368,9 @@ def extract_sfc_fluxes_merra2(d1, d2, t1, t2, lat, lon, dx):
         + 1.0
         for t in d1.time.loc[t1:t2].values
     ]
+    print("MERRA2 surface data times read in:")
+    for t, tt in zip(toy, d1.time.loc[t1:t2].values):
+        print(f"{t:8.4f} -- {tt}")
     return np.asarray(toy), sst, shf, lhf
 
 
