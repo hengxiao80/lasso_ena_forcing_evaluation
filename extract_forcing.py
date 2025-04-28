@@ -11,7 +11,8 @@ def extract_everything(datestring, dx=2.5, hrs_to_shift=0, hrs_to_simulate=24):
     h = 30.0  # surface elevation of ENA site in m
     lat = 39.0916  # deg N
     lon = -28.0257  # deg E
-    forc_dir = "/ccsopen/home/hengxiao80/ena_forcing/forcing"
+    # forc_dir = "/ccsopen/home/hengxiao80/ena_forcing/forcing"
+    forc_dir = "/gpfs/wolf2/arm/cli120/proj-shared/sey/ena/forcing"
     sonde_dir = "/ccsopen/home/hengxiao80/ena_forcing/obs/enasondewnpnC1"
 
     dz = 25.0  # m
