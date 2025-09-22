@@ -1,6 +1,6 @@
-## forcing_extraction.ipynb
+## forcing_extraction_sam.ipynb
 
-- driver for generating forcings (ERA5 and MERRA2)
+- driver for generating forcings for SAM (ERA5 and MERRA2)
 
 ## extract_forcing.py
 
